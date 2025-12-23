@@ -135,7 +135,7 @@ export const generateStoryContent = async (
       Format: JSON array of objects {pageNumber, text, imagePrompt}.
     `;
 
-    const modelName = import.meta.env.VITE_GEMINI_TEXT_MODEL || 'gemini-3-flash';
+    const modelName = import.meta.env.VITE_GEMINI_TEXT_MODEL || 'gemini-3-flash-preview';
     logInfo(`Sending prompt to Gemini (Model: ${modelName})...`);
     logInfo("Prompt preview:", prompt.substring(0, 200) + "...");
 

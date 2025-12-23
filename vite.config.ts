@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react()],
     define: {
-      // Gemini API Key
+      // Gemini API Key (server-side only conceptually, but needed in client for this app)
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       // Supabase Configuration
@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
       'process.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(env.VITE_SUPABASE_ANON_KEY),
       'process.env.SUPABASE_URL': JSON.stringify(env.VITE_SUPABASE_URL),
       'process.env.SUPABASE_ANON_KEY': JSON.stringify(env.VITE_SUPABASE_ANON_KEY),
+      // Model Configuration (exposed via import.meta.env automatically for VITE_ prefix)
     },
     resolve: {
       alias: {
