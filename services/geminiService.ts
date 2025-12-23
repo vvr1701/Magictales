@@ -231,14 +231,40 @@ export const generateIllustration = async (
   }, "Illustration Generation");
 };
 
-export const editIllustration = async (base64Image: string, editPrompt: string): Promise<string> => {
+export const editIllustration = async (imageSource: string, editPrompt: string): Promise<string> => {
   logInfo("=== STARTING ILLUSTRATION EDIT ===");
   logInfo("Edit prompt:", editPrompt);
-  logInfo("Image data length:", base64Image.length);
+  logInfo("Image source type:", imageSource.startsWith('data:') ? 'base64' : 'URL');
 
   return withRetry(async () => {
     const apiKey = getApiKey();
     const ai = new GoogleGenAI({ apiKey });
+
+    // Handle both URL and base64 image sources
+    let base64Data: string;
+
+    if (imageSource.startsWith('data:')) {
+      // Already base64
+      base64Data = imageSource.split(',')[1] || imageSource;
+    } else if (imageSource.startsWith('http')) {
+      // URL - need to fetch and convert to base64
+      logInfo("Fetching image from URL...");
+      try {
+        const response = await fetch(imageSource);
+        const blob = await response.blob();
+        const arrayBuffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = '';
+        bytes.forEach(byte => binary += String.fromCharCode(byte));
+        base64Data = btoa(binary);
+        logInfo("Image converted to base64, length:", base64Data.length);
+      } catch (fetchError) {
+        logError("Failed to fetch image from URL:", fetchError);
+        throw new Error("Could not load image for editing. Please try again.");
+      }
+    } else {
+      base64Data = imageSource;
+    }
 
     const modelName = import.meta.env.VITE_GEMINI_IMAGE_MODEL || 'gemini-3-pro-image-preview';
     logInfo(`Sending edit request (Model: ${modelName})...`);
@@ -247,7 +273,7 @@ export const editIllustration = async (base64Image: string, editPrompt: string):
       model: modelName,
       contents: {
         parts: [
-          { inlineData: { data: base64Image.split(',')[1] || base64Image, mimeType: "image/png" } },
+          { inlineData: { data: base64Data, mimeType: "image/png" } },
           { text: `Edit this image: ${editPrompt}` }
         ]
       },

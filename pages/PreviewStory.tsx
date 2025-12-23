@@ -104,43 +104,43 @@ const PreviewStory: React.FC = () => {
       image: "https://img.icons8.com/color/96/000000/star--v1.png",
       handler: async (response: any) => {
         if (response.razorpay_payment_id) {
-          try {
-            console.log('💳 [Payment] Success! Payment ID:', response.razorpay_payment_id);
+          console.log('💳 [Payment] Success! Payment ID:', response.razorpay_payment_id);
 
-            // 1. Save payment details to database
-            await savePayment({
-              bookId: book.id,
-              userId: book.userId,
-              razorpayPaymentId: response.razorpay_payment_id,
-              razorpayOrderId: response.razorpay_order_id,
-              razorpaySignature: response.razorpay_signature,
-              amount: Math.round(STORYBOOK_PRICE * 100),
-              currency: 'INR'
-            });
-            console.log('✅ [Payment] Payment details saved to database');
+          // IMMEDIATELY update UI using functional update to avoid stale closure
+          setBook(prevBook => {
+            if (!prevBook) return prevBook;
+            const updatedBook = { ...prevBook, paymentStatus: 'paid' as const };
 
-            // 2. Update book status to paid
-            const updatedBook: Storybook = { ...book, paymentStatus: 'paid' };
+            // Background: Save payment and book (fire and forget)
+            (async () => {
+              try {
+                await savePayment({
+                  bookId: prevBook.id,
+                  userId: prevBook.userId,
+                  razorpayPaymentId: response.razorpay_payment_id,
+                  razorpayOrderId: response.razorpay_order_id || '',
+                  razorpaySignature: response.razorpay_signature || '',
+                  amount: Math.round(STORYBOOK_PRICE * 100),
+                  currency: 'INR'
+                });
+                console.log('✅ [Payment] Payment saved');
+              } catch (e) {
+                console.warn('⚠️ [Payment] DB save failed:', e);
+              }
 
-            // 3. Generate high-resolution PDF (no watermark)
-            console.log('📄 [Payment] Generating high-res PDF...');
-            const finalPdfBlob = await generateStorybookPDF(updatedBook, false);
+              try {
+                await storage.saveBook(updatedBook);
+                console.log('✅ [Payment] Book updated');
+              } catch (e) {
+                console.warn('⚠️ [Payment] Book save failed:', e);
+              }
+            })();
 
-            // 4. Upload PDF and save book
-            const pdfUrl = await storage.uploadBookPDF(book.id, finalPdfBlob);
-            updatedBook.pdfUrl = pdfUrl;
-            await storage.saveBook(updatedBook, pdfUrl);
-            console.log('✅ [Payment] Book updated with PDF URL:', pdfUrl);
+            return updatedBook;
+          });
 
-            // 5. Update UI
-            setBook(updatedBook);
-            setIsPaymentLoading(false);
-            alert(`🎉 Magic Unlocked! Your high-resolution storybook is ready for download.`);
-          } catch (error) {
-            console.error("❌ [Payment] Post-payment processing failed:", error);
-            setIsPaymentLoading(false);
-            alert("Payment successful! Your book is being finalized. Please check your dashboard in a moment.");
-          }
+          setIsPaymentLoading(false);
+          alert('🎉 Payment successful! Click "Download Your Book" to get your high-resolution PDF.');
         }
       },
       prefill: {

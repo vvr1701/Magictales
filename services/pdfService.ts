@@ -91,7 +91,7 @@ export const generateStorybookPDF = async (book: Storybook, isWatermarked: boole
   addWatermark();
 
   // ==========================================
-  // 3. STORY PAGES - FULL PAGE IMAGES ONLY
+  // 3. STORY PAGES - IMAGE + TEXT OVERLAY
   // ==========================================
   for (const page of book.pages) {
     doc.addPage();
@@ -104,10 +104,27 @@ export const generateStorybookPDF = async (book: Storybook, isWatermarked: boole
         console.warn(`Page ${page.pageNumber} image failed`, e);
         doc.setFillColor(palette.bg[0], palette.bg[1], palette.bg[2]);
         doc.rect(0, 0, pageWidth, pageHeight, 'F');
-        doc.setTextColor(100, 100, 100);
-        doc.setFontSize(20);
-        doc.text(`Page ${page.pageNumber} - Image unavailable`, pageWidth / 2, pageHeight / 2, { align: 'center' });
       }
+    }
+
+    // Add text overlay at bottom of page (like the preview)
+    if (page.text) {
+      // Semi-transparent dark gradient overlay at bottom
+      doc.saveGraphicsState();
+      doc.setGState(doc.GState({ opacity: 0.75 }));
+      doc.setFillColor(0, 0, 0);
+      doc.rect(0, pageHeight - 2.5, pageWidth, 2.5, 'F');
+      doc.restoreGraphicsState();
+
+      // White text on the overlay
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'italic');
+
+      // Split text to fit width (with padding)
+      const textLines = doc.splitTextToSize(page.text, pageWidth - 1);
+      const textY = pageHeight - 1.5;
+      doc.text(textLines, pageWidth / 2, textY, { align: 'center', lineHeightFactor: 1.4 });
     }
 
     addWatermark();
