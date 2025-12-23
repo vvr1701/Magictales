@@ -1,0 +1,7 @@
+{
+  "name": "Copy of MagicTales - AI Personalized Storybooks",
+  "description": "Create magical, personalized children's storybooks with AI-generated stories and illustrations featuring your child.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
