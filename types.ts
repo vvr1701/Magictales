@@ -1,10 +1,20 @@
 
 export enum ThemeType {
-  ADVENTURE = 'Adventure',
-  SPACE = 'Space',
-  UNDERWATER = 'Underwater',
-  FAIRY_TALE = 'Fairy Tale',
-  DINOSAUR = 'Dinosaur'
+  ENCHANTED_FOREST = 'Enchanted Forest',
+  MAGIC_CASTLE = 'Magic Castle',
+  SPY_MISSION = 'Spy Mission'
+}
+
+export interface Theme {
+  id: ThemeType;
+  title: string;
+  description: string;
+  icon: string;
+  ageRange: string;
+  tags: string[];
+  color: string;
+  coverPrompt: string;
+  defaultCover: string;
 }
 
 export interface ChildDetails {
@@ -31,6 +41,8 @@ export interface Storybook {
   childAge: number;
   childGender: string;
   theme: ThemeType;
+  coverUrl?: string; // Cover page image URL
+  storyTitle?: string; // Story title for cover display
   pages: StoryPage[];
   paymentStatus: 'pending' | 'paid';
   createdAt: string;

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import { LogPanel, LogToggleButton } from './components/LogPanel';
@@ -9,9 +9,13 @@ import Dashboard from './pages/Dashboard';
 import Auth from './pages/Auth';
 import CreateStory from './pages/CreateStory';
 import PreviewStory from './pages/PreviewStory';
+import GenerationFeed from './pages/GenerationFeed';
 import About from './pages/About';
 import { User } from './types';
 import { supabase, isSupabaseConfigured } from './services/supabaseClient';
+
+// Dynamic basename: /apps/zelavo for Shopify production, / for local dev
+const basename = import.meta.env.PROD ? '/apps/zelavo' : '/';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -85,24 +89,30 @@ const App: React.FC = () => {
     );
   }
 
+  // TESTING: Mock user to bypass auth
+  const testUser = { id: 'test-user-123', email: 'test@test.com', name: 'Test User' };
+  const effectiveUser = user || testUser; // Use test user if not logged in
+
   return (
-    <Router>
+    <BrowserRouter basename={basename}>
       <div className="flex flex-col min-h-screen">
-        <Navbar user={user} onLogout={handleLogout} />
+        <Navbar user={effectiveUser} onLogout={handleLogout} />
         <main className="flex-grow">
           <Routes>
-            <Route path="/" element={<Home user={user} />} />
+            <Route path="/" element={<Home user={effectiveUser} />} />
             <Route path="/about" element={<About />} />
             <Route path="/auth" element={!user ? <Auth onLogin={(u) => setUser(u)} /> : <Navigate to="/" />} />
-            <Route path="/dashboard" element={user ? <Dashboard user={user} /> : <Navigate to="/auth" />} />
-            <Route path="/create" element={user ? <CreateStory user={user} /> : <Navigate to="/auth" />} />
+            {/* TESTING: Removed auth guards for testing */}
+            <Route path="/dashboard" element={<Dashboard user={effectiveUser} />} />
+            <Route path="/create" element={<CreateStory user={effectiveUser} />} />
+            <Route path="/generating/:jobId" element={<GenerationFeed />} />
             <Route path="/preview/:id" element={<PreviewStory />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </main>
         <Footer />
       </div>
-    </Router>
+    </BrowserRouter>
   );
 };
 

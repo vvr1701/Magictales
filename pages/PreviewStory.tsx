@@ -1,63 +1,118 @@
-
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Storybook } from '../types';
 import { STORYBOOK_PRICE, THEMES } from '../constants';
 import {
-  ChevronLeft,
-  ChevronRight,
-  Lock,
   Sparkles,
-  CreditCard,
   CheckCircle,
-  Wand2,
   Download,
   Loader2,
-  FileText,
-  BookOpen,
-  LayoutGrid,
-  Star,
-  Maximize2,
-  AlertTriangle
+  AlertTriangle,
+  ShoppingCart,
+  PartyPopper
 } from 'lucide-react';
-import { editIllustration } from '../services/geminiService';
 import * as storage from '../services/storageService';
-import { generateStorybookPDF, downloadBlob } from '../services/pdfService';
-import { savePayment } from '../services/paymentService';
-
-declare const Razorpay: any;
+import {
+  api,
+  buyNowWithShopify,
+  SHOPIFY_CONFIG,
+  isShopifyEnvironment,
+  isShopifyCustomerLoggedIn,
+} from '../src/api/client';
+import BookPageCard from '../components/BookPageCard';
+import CoverPageCard from '../components/CoverPageCard';
+import AuthModal, { hasChosenGuestMode } from '../components/AuthModal';
+import { LockedPagesSection } from '../components/LockedPageCard';
+import UnlockingOverlay from '../components/UnlockingOverlay';
 
 const PreviewStory: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const bookTopRef = useRef<HTMLDivElement>(null);
 
   const [book, setBook] = useState<Storybook | null>(null);
   const [integrityError, setIntegrityError] = useState<boolean>(false);
-  const [currentPage, setCurrentPage] = useState(0);
-  const [viewMode, setViewMode] = useState<'reader' | 'gallery'>('reader');
-
-  const [isProcessingEdit, setIsProcessingEdit] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [isPaymentLoading, setIsPaymentLoading] = useState(false);
-  const [editPrompt, setEditPrompt] = useState("");
   const [loading, setLoading] = useState(true);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'download' | 'payment' | null>(null);
+  const [checkoutSuccess, setCheckoutSuccess] = useState(false);
+  const [pollingPayment, setPollingPayment] = useState(false);
+
+  // NEW: Locked pages state for 5-page preview mode
+  const [lockedPages, setLockedPages] = useState<Array<{ page_number: number; story_text: string }>>([]);
+  const [generationPhase, setGenerationPhase] = useState<'preview' | 'generating_full' | 'complete'>('preview');
+
+  // NEW: Unlocking overlay state
+  const [showUnlocking, setShowUnlocking] = useState(false);
+  const [unlockProgress, setUnlockProgress] = useState(0);
+  const [customerEmail, setCustomerEmail] = useState('');
 
   useEffect(() => {
     const loadBook = async () => {
       if (!id) return;
       try {
-        const found = await storage.getBookById(id);
-        if (found) {
-          // Relaxed check: As long as there are pages, we show the book
-          const hasPages = found.pages && found.pages.length > 0;
-          if (!hasPages) {
+        const previewData = await api.getPreview(id);
+
+        // Map API response to frontend Storybook type
+        if (previewData) {
+          // Get cover URL and story title from API
+          const coverUrl = previewData.cover_url ||
+            previewData.preview_pages.find((p: any) => p.page_number === 0 || p.is_cover)?.image_url;
+          const storyTitle = previewData.story_title || `${previewData.child_name}'s Adventure`;
+
+          // Filter out cover page (page 0) from regular pages
+          const storyPages = previewData.preview_pages.filter(
+            (p: any) => p.page_number > 0 && !p.is_cover
+          );
+
+          const mappedBook: Storybook = {
+            id: previewData.preview_id,
+            userId: 'current-user',
+            childName: previewData.child_name,
+            childAge: 5,
+            childGender: 'Adventurer',
+            theme: previewData.theme as unknown as any,
+            coverUrl: coverUrl || '',
+            storyTitle: storyTitle,
+            pages: storyPages.map((p: any) => ({
+              pageNumber: p.page_number,
+              text: p.story_text,
+              imagePrompt: 'Generated story',
+              imageUrl: p.image_url
+            })),
+            paymentStatus: previewData.status === 'purchased' ? 'paid' : 'pending',
+            createdAt: new Date().toISOString()
+          };
+
+          setBook(mappedBook);
+
+          // Store locked pages and generation phase
+          if (previewData.locked_pages) {
+            setLockedPages(previewData.locked_pages.map((lp: any) => ({
+              page_number: lp.page_number,
+              story_text: lp.story_text
+            })));
+          }
+
+          const phase = previewData.generation_phase || 'preview';
+          setGenerationPhase(phase);
+
+          // AUTO-START: If page loads and generation is in progress, show overlay and poll
+          if (phase === 'generating_full' && previewData.status === 'purchased') {
+            console.log('🔄 Page loaded during generation - auto-starting overlay');
+            setShowUnlocking(true);
+            setUnlockProgress(60);
+            // Will poll in separate effect
+          }
+
+          if (mappedBook.pages.length === 0) {
             setIntegrityError(true);
           }
-          setBook(found);
         }
       } catch (error) {
         console.error("Failed to load book:", error);
+        setIntegrityError(true);
       } finally {
         setLoading(false);
       }
@@ -65,126 +120,203 @@ const PreviewStory: React.FC = () => {
     loadBook();
   }, [id]);
 
-  const handlePageJump = (index: number) => {
-    setCurrentPage(index);
-    setViewMode('reader');
-    setTimeout(() => {
-      bookTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 100);
+  // Detect checkout success from URL and poll for payment status
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const isCheckoutSuccess = urlParams.get('checkout_success') === 'true';
+
+    if (isCheckoutSuccess && id) {
+      setCheckoutSuccess(true);
+      // Clean URL without reload
+      window.history.replaceState({}, '', window.location.pathname);
+
+      // Start polling for payment confirmation
+      pollPaymentStatus(id);
+    }
+  }, [id]);
+
+  // AUTO-POLL: Start polling when page loads in generating_full phase (e.g., after refresh)
+  useEffect(() => {
+    if (showUnlocking && generationPhase === 'generating_full' && id && !pollingPayment) {
+      console.log('🔄 Auto-starting generation poll on page load');
+      pollGenerationComplete(id);
+    }
+  }, [showUnlocking, generationPhase, id]);
+
+  // Poll backend until payment confirmed AND generation complete
+  const pollPaymentStatus = async (previewId: string) => {
+    setPollingPayment(true);
+    setShowUnlocking(true);
+    setUnlockProgress(10);
+
+    const maxPaymentAttempts = 15; // 30 seconds for payment confirmation
+    const maxGenerationAttempts = 60; // 2 minutes for remaining page generation
+
+    // Phase 1: Poll for payment confirmation
+    for (let i = 0; i < maxPaymentAttempts; i++) {
+      try {
+        const previewData = await api.getPreview(previewId);
+        setUnlockProgress(10 + (i * 3)); // Progress 10-55%
+
+        if (previewData.status === 'purchased' || previewData.generation_phase !== 'preview') {
+          console.log('✅ Payment confirmed!');
+          setBook(prev => prev ? { ...prev, paymentStatus: 'paid' } : prev);
+          setPollingPayment(false);
+          setCheckoutSuccess(false);
+          setUnlockProgress(60);
+
+          // Phase 2: Poll for generation completion
+          await pollGenerationComplete(previewId);
+          return;
+        }
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    // Timeout
+    setPollingPayment(false);
+    setShowUnlocking(false);
+    alert('Payment is still processing. Please refresh the page in a moment.');
   };
 
-  const handleDownloadPDF = async () => {
+  // Poll for remaining page generation to complete
+  const pollGenerationComplete = async (previewId: string) => {
+    const maxAttempts = 60; // 2 minutes
+
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const previewData = await api.getPreview(previewId);
+        setUnlockProgress(60 + (i * 0.6)); // Progress 60-96%
+        setGenerationPhase(previewData.generation_phase || 'generating_full');
+
+        if (previewData.generation_phase === 'complete') {
+          console.log('✅ Generation complete! All 10 pages ready.');
+          setUnlockProgress(100);
+
+          // Get cover and story title for display
+          const coverUrl = previewData.cover_url ||
+            previewData.preview_pages.find((p: any) => p.page_number === 0 || p.is_cover)?.image_url;
+          const storyTitle = previewData.story_title || `${previewData.child_name}'s Adventure`;
+
+          // Filter out cover page from regular pages
+          const storyPages = previewData.preview_pages.filter(
+            (p: any) => p.page_number > 0 && !p.is_cover
+          );
+
+          // Reload all pages (now including 6-10 with hi-res)
+          const mappedBook: Storybook = {
+            id: previewData.preview_id,
+            userId: 'current-user',
+            childName: previewData.child_name,
+            childAge: 5,
+            childGender: 'Adventurer',
+            theme: previewData.theme as unknown as any,
+            coverUrl: coverUrl || '',
+            storyTitle: storyTitle,
+            pages: storyPages.map((p: any) => ({
+              pageNumber: p.page_number,
+              text: p.story_text,
+              imagePrompt: 'Generated story',
+              imageUrl: p.image_url
+            })),
+            paymentStatus: 'paid',
+            createdAt: new Date().toISOString()
+          };
+          setBook(mappedBook);
+          setLockedPages([]); // Clear locked pages
+          setGenerationPhase('complete');
+
+          // Hide overlay after brief celebration
+          setTimeout(() => {
+            setShowUnlocking(false);
+          }, 1500);
+          return;
+        }
+      } catch (e) {
+        console.error('Generation polling error:', e);
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    // Still not complete - show message but hide overlay
+    setShowUnlocking(false);
+    alert('Your book is almost ready! We\'ll email you when it\'s complete.');
+  };
+
+  const handleDownloadClick = () => {
+    if (!book || integrityError) return;
+
+    // Check if user is logged in or has chosen guest mode for premium downloads
+    if (!isShopifyCustomerLoggedIn() && !hasChosenGuestMode()) {
+      setPendingAction('download');
+      setShowAuthModal(true);
+      return;
+    }
+
+    performDownload();
+  };
+
+  const performDownload = async () => {
     if (!book || integrityError) return;
     setIsGeneratingPDF(true);
     try {
-      const isPaid = book.paymentStatus === 'paid';
-      const pdfBlob = await generateStorybookPDF(book, !isPaid);
-      const filename = `${book.childName}_${book.theme}_Adventure${!isPaid ? '_Preview' : ''}.pdf`;
-      downloadBlob(pdfBlob, filename);
+      if (book.paymentStatus === 'paid') {
+        const downloadData = await api.getDownload(book.id);
+        if (downloadData.status === 'ready' && downloadData.downloads?.pdf) {
+          window.open(downloadData.downloads.pdf.url, '_blank');
+        } else if (downloadData.status === 'generating') {
+          alert('Your PDF is still being generated. Please try again in a few minutes.');
+        } else {
+          throw new Error('PDF download not available');
+        }
+      } else {
+        alert('Please purchase to download the full PDF.');
+      }
     } catch (e) {
       console.error(e);
-      alert("Failed to generate PDF. Please try again.");
+      alert("Failed to download PDF. Please try again.");
     } finally {
       setIsGeneratingPDF(false);
     }
   };
 
-  const handlePayment = async () => {
+  const handlePaymentClick = () => {
+    if (!book || integrityError) return;
+
+    // Check if user is logged in or has chosen guest mode
+    if (!isShopifyCustomerLoggedIn() && !hasChosenGuestMode()) {
+      setPendingAction('payment');
+      setShowAuthModal(true);
+      return;
+    }
+
+    performPayment();
+  };
+
+  /**
+   * Handle payment via Shopify Cart + Checkout
+   */
+  const performPayment = async () => {
     if (!book || integrityError) return;
     setIsPaymentLoading(true);
 
-    const razorpayKey = 'rzp_test_RuefhfTR9sy1mj';
-
-    const options = {
-      key: razorpayKey,
-      amount: Math.round(STORYBOOK_PRICE * 100),
-      currency: "INR",
-      name: "MagicTales AI",
-      description: `Premium Storybook: ${book.childName}'s ${book.theme} Adventure`,
-      image: "https://img.icons8.com/color/96/000000/star--v1.png",
-      handler: async (response: any) => {
-        if (response.razorpay_payment_id) {
-          console.log('💳 [Payment] Success! Payment ID:', response.razorpay_payment_id);
-
-          // IMMEDIATELY update UI using functional update to avoid stale closure
-          setBook(prevBook => {
-            if (!prevBook) return prevBook;
-            const updatedBook = { ...prevBook, paymentStatus: 'paid' as const };
-
-            // Background: Save payment and book (fire and forget)
-            (async () => {
-              try {
-                await savePayment({
-                  bookId: prevBook.id,
-                  userId: prevBook.userId,
-                  razorpayPaymentId: response.razorpay_payment_id,
-                  razorpayOrderId: response.razorpay_order_id || '',
-                  razorpaySignature: response.razorpay_signature || '',
-                  amount: Math.round(STORYBOOK_PRICE * 100),
-                  currency: 'INR'
-                });
-                console.log('✅ [Payment] Payment saved');
-              } catch (e) {
-                console.warn('⚠️ [Payment] DB save failed:', e);
-              }
-
-              try {
-                await storage.saveBook(updatedBook);
-                console.log('✅ [Payment] Book updated');
-              } catch (e) {
-                console.warn('⚠️ [Payment] Book save failed:', e);
-              }
-            })();
-
-            return updatedBook;
-          });
-
-          setIsPaymentLoading(false);
-          alert('🎉 Payment successful! Click "Download Your Book" to get your high-resolution PDF.');
-        }
-      },
-      prefill: {
-        name: book.childName,
-        email: "parent@example.com",
-      },
-      theme: { color: "#FF6B9D" },
-      modal: { ondismiss: () => setIsPaymentLoading(false) }
-    };
-
     try {
-      const rzp1 = new Razorpay(options);
-      rzp1.open();
-    } catch (e) {
+      console.log('🛒 [Shopify] Adding to cart and redirecting to checkout...');
+      await buyNowWithShopify(book.id);
+      // Note: Page will redirect to Shopify checkout
+      // After payment, user returns with ?checkout_success=true
+    } catch (error) {
+      console.error('❌ [Shopify] Failed to add to cart:', error);
       setIsPaymentLoading(false);
+      alert('Failed to add to cart. Please try again.');
     }
   };
 
-  const handleEditImage = async () => {
-    if (!book || !editPrompt || isProcessingEdit || integrityError) return;
-
-    setIsProcessingEdit(true);
-    try {
-      const currentPageData = book.pages[currentPage];
-      if (currentPageData.imageUrl) {
-        const newUrl = await editIllustration(currentPageData.imageUrl, editPrompt);
-        const updatedPages = [...book.pages];
-        updatedPages[currentPage] = { ...currentPageData, imageUrl: newUrl };
-        const updatedBook = { ...book, pages: updatedPages };
-
-        await storage.saveBook(updatedBook);
-        setBook(updatedBook);
-        setEditPrompt("");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("The magic ink blurred. Please try a simpler request!");
-    } finally {
-      setIsProcessingEdit(false);
-    }
-  };
-
+  // Loading state
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-white">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="text-center">
         <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto mb-4" />
         <p className="font-heading text-2xl text-slate-800 animate-pulse">Opening the Secret Library...</p>
@@ -192,10 +324,11 @@ const PreviewStory: React.FC = () => {
     </div>
   );
 
+  // Error state
   if (!book || integrityError) {
     return (
       <div className="min-h-[70vh] flex items-center justify-center p-4">
-        <div className="bg-white rounded-[3rem] shadow-2xl p-12 max-w-lg text-center border border-red-50">
+        <div className="bg-white rounded-3xl shadow-2xl p-12 max-w-lg text-center border border-red-50">
           <div className="bg-red-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
             <AlertTriangle className="w-10 h-10 text-red-500" />
           </div>
@@ -216,268 +349,223 @@ const PreviewStory: React.FC = () => {
     );
   }
 
+  const themeData = THEMES.find(t => t.id === book.theme);
+
   return (
-    <div className="bg-[#fafafa] min-h-screen py-12 px-4 select-none" onContextMenu={(e) => e.preventDefault()}>
-      <div className="max-w-7xl mx-auto" ref={bookTopRef}>
+    <>
+      {/* Unlocking Overlay - shown after payment */}
+      <UnlockingOverlay
+        childName={book.childName}
+        isVisible={showUnlocking}
+        progress={unlockProgress}
+        email={customerEmail}
+        onEmailChange={setCustomerEmail}
+      />
 
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
-          <div className="animate-in fade-in slide-in-from-left-4 duration-500">
-            <div className="flex items-center space-x-2 text-primary mb-2">
-              <Star className="w-5 h-5 fill-current" />
-              <span className="text-xs font-black uppercase tracking-widest">Masterpiece Created</span>
+      <div className="min-h-screen bg-gray-50 pb-28">
+        {/* Hero Header */}
+        <div className="bg-white border-b border-gray-100 py-8 px-4 mb-8">
+          <div className="max-w-3xl mx-auto text-center">
+            <div className="flex items-center justify-center space-x-2 text-primary mb-2">
+              <Sparkles className="w-5 h-5 fill-current" />
+              <span className="text-xs font-black uppercase tracking-widest">Your Story is Ready</span>
             </div>
-            <h1 className="text-4xl md:text-5xl font-heading text-slate-900 leading-tight">
-              {book.childName}'s <span className="text-primary">{book.theme}</span> Adventure
+            <h1 className="text-3xl md:text-4xl font-heading text-slate-900 mb-2">
+              {book.childName}'s <span className="text-primary">{themeData?.title || book.theme.replace('storygift_', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span> Adventure
             </h1>
-            <p className="text-gray-500 font-medium mt-1">Personalized for a {book.childAge} year old hero.</p>
-          </div>
-
-          <div className="flex bg-white p-2 rounded-3xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-right-4 duration-500">
-            <button
-              onClick={() => setViewMode('reader')}
-              className={`flex items-center space-x-2 px-6 py-3 rounded-2xl font-bold transition-all ${viewMode === 'reader' ? 'bg-primary text-white shadow-lg' : 'text-gray-400 hover:text-primary'}`}
-            >
-              <BookOpen className="w-5 h-5" />
-              <span>Reader</span>
-            </button>
-            <button
-              onClick={() => setViewMode('gallery')}
-              className={`flex items-center space-x-2 px-6 py-3 rounded-2xl font-bold transition-all ${viewMode === 'gallery' ? 'bg-primary text-white shadow-lg' : 'text-gray-400 hover:text-primary'}`}
-            >
-              <LayoutGrid className="w-5 h-5" />
-              <span>Gallery</span>
-            </button>
+            <p className="text-gray-500">
+              {/* Page count includes cover */}
+              {book.coverUrl ? (book.pages.length + 1) : book.pages.length} magical pages • {themeData?.icon || '📚'} {themeData?.title || book.theme.replace('storygift_', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </p>
           </div>
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-10">
+        {/* Vertical Page Cards Feed - Compact, centered cards */}
+        <div className="max-w-md mx-auto px-4 space-y-5">
+          {/* Cover Page - displayed first with title/starring overlays */}
+          {book.coverUrl && (
+            <CoverPageCard
+              imageUrl={book.coverUrl}
+              storyTitle={book.storyTitle || `${book.childName}'s Adventure`}
+              childName={book.childName}
+              isPaid={book.paymentStatus === 'paid'}
+            />
+          )}
 
-          <div className="lg:w-2/3">
-            {viewMode === 'reader' ? (
-              <div className="animate-in zoom-in-95 duration-500">
-                <div className="bg-white rounded-[3rem] shadow-2xl overflow-hidden border-[12px] border-white relative group">
-                  <div className="aspect-square relative bg-gray-50 flex items-center justify-center overflow-hidden">
-                    <img
-                      src={book.pages[currentPage]?.imageUrl || ''}
-                      alt={`Page ${currentPage + 1}`}
-                      className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105"
-                    />
-
-                    {book.paymentStatus === 'pending' && (
-                      <>
-                        <div className="absolute inset-0 watermark-overlay z-10 opacity-60"></div>
-                        <div className="watermark-text select-none">PREVIEW ONLY</div>
-                      </>
-                    )}
-
-                    <div className="absolute bottom-0 left-0 right-0 p-10 bg-gradient-to-t from-black/80 via-black/40 to-transparent text-white z-20">
-                      <p className="text-2xl md:text-3xl font-heading leading-relaxed text-center drop-shadow-xl px-4">
-                        {book.pages[currentPage]?.text}
-                      </p>
-                    </div>
-
-                    <div className="absolute inset-y-0 left-0 flex items-center p-4 z-30 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        disabled={currentPage === 0}
-                        onClick={() => setCurrentPage(prev => prev - 1)}
-                        className="p-4 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white hover:text-primary transition-all disabled:opacity-0 shadow-lg"
-                      >
-                        <ChevronLeft className="w-8 h-8" />
-                      </button>
-                    </div>
-                    <div className="absolute inset-y-0 right-0 flex items-center p-4 z-30 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        disabled={currentPage === book.pages.length - 1}
-                        onClick={() => setCurrentPage(prev => prev + 1)}
-                        className="p-4 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white hover:text-primary transition-all disabled:opacity-0 shadow-lg"
-                      >
-                        <ChevronRight className="w-8 h-8" />
-                      </button>
-                    </div>
+          {/* Story Pages */}
+          {book.pages.map((page, index) => (
+            <div
+              key={page.pageNumber}
+              className="relative"
+            >
+              {/* Watermark overlay for unpaid */}
+              {book.paymentStatus === 'pending' && (
+                <div className="absolute inset-0 z-10 pointer-events-none">
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-4xl font-black text-gray-200 opacity-30 rotate-[-15deg] select-none">
+                      PREVIEW
+                    </span>
                   </div>
+                </div>
+              )}
 
-                  <div className="flex justify-between items-center px-10 py-8 bg-white border-t border-gray-50">
-                    <button
-                      disabled={currentPage === 0}
-                      onClick={() => setCurrentPage(prev => prev - 1)}
-                      className="p-4 rounded-full bg-gray-50 text-gray-400 hover:bg-primary hover:text-white disabled:opacity-20 transition-all shadow-sm active:scale-90"
-                    >
-                      <ChevronLeft className="w-6 h-6" />
-                    </button>
+              {/* Premium Page Card - matches PDF layout (80% image, 20% text) */}
+              <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+                {/* Page Header */}
+                <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                  <span className="text-xs font-black text-gray-400 uppercase tracking-widest">
+                    Page {page.pageNumber}
+                  </span>
+                  {book.paymentStatus === 'paid' && (
+                    <span className="text-xs font-bold text-green-500 flex items-center space-x-1">
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Unlocked</span>
+                    </span>
+                  )}
+                </div>
 
-                    <div className="flex flex-col items-center">
-                      <div className="flex space-x-2.5 mb-3">
-                        {book.pages.map((_, i) => (
-                          <button
-                            key={i}
-                            className={`h-2.5 rounded-full transition-all duration-500 ${i === currentPage ? 'w-10 bg-primary shadow-sm' : 'w-2.5 bg-gray-200 hover:bg-primary/20'}`}
-                            onClick={() => setCurrentPage(i)}
-                          ></button>
-                        ))}
-                      </div>
-                      <div className="text-gray-400 font-black text-xs tracking-[0.2em] uppercase">
-                        Exploring Page {currentPage + 1}
-                      </div>
-                    </div>
-
-                    <button
-                      disabled={currentPage === book.pages.length - 1}
-                      onClick={() => setCurrentPage(prev => prev + 1)}
-                      className="p-4 rounded-full bg-gray-50 text-gray-400 hover:bg-primary hover:text-white disabled:opacity-20 transition-all shadow-sm active:scale-90"
-                    >
-                      <ChevronRight className="w-6 h-6" />
-                    </button>
+                {/* Image Section - 4:3 aspect ratio for compact mobile view */}
+                <div className="relative bg-gray-100">
+                  <div className="aspect-[4/3]">
+                    <img
+                      src={page.imageUrl}
+                      alt={`Page ${page.pageNumber} illustration`}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                 </div>
 
-                {book.paymentStatus === 'pending' && (
-                  <div className="mt-10 bg-white p-10 rounded-[2.5rem] shadow-xl border border-gray-100 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:rotate-12 transition-transform">
-                      <Sparkles className="w-24 h-24 text-primary" />
-                    </div>
-                    <div className="relative z-10">
-                      <div className="flex items-center space-x-4 mb-8">
-                        <div className="bg-primary/10 p-3 rounded-2xl">
-                          <Wand2 className="text-primary w-7 h-7" />
-                        </div>
-                        <div>
-                          <h3 className="font-heading text-2xl text-slate-800">Magical Brush</h3>
-                          <p className="text-gray-500 font-medium">Ask our AI artist to adjust this illustration!</p>
-                        </div>
-                      </div>
-                      <div className="flex flex-col sm:flex-row gap-4">
-                        <input
-                          type="text"
-                          value={editPrompt}
-                          onChange={(e) => setEditPrompt(e.target.value)}
-                          placeholder="E.g. Add a rainbow in the sky..."
-                          className="flex-grow px-7 py-5 rounded-2xl border-2 border-gray-100 bg-gray-50 text-slate-900 focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/5 outline-none text-lg font-medium shadow-inner transition-all placeholder:text-gray-400"
-                        />
-                        <button
-                          onClick={handleEditImage}
-                          disabled={isProcessingEdit || !editPrompt}
-                          className="bg-primary text-white px-10 py-5 rounded-2xl font-bold text-lg hover:shadow-primary/30 hover:shadow-xl disabled:opacity-50 transition-all flex items-center justify-center space-x-3 active:scale-95 shadow-lg shadow-primary/10"
-                        >
-                          {isProcessingEdit ? <Loader2 className="w-6 h-6 animate-spin" /> : <Sparkles className="w-6 h-6" />}
-                          <span>Recast</span>
-                        </button>
-                      </div>
-                    </div>
+                {/* Text Section - matches PDF's 20% text area */}
+                <div className="p-4 bg-white border-t border-gray-50">
+                  <p className="text-sm md:text-base text-gray-800 leading-relaxed font-medium text-center">
+                    {page.text}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* End of story indicator (only show if complete) */}
+          {generationPhase === 'complete' && (
+            <div className="text-center py-8">
+              <div className="text-4xl mb-4">✨</div>
+              <p className="text-gray-400 font-heading text-xl">The End</p>
+            </div>
+          )}
+
+          {/* LOCKED PAGES SECTION - Show when in preview phase */}
+          {generationPhase === 'preview' && lockedPages.length > 0 && book.paymentStatus === 'pending' && (
+            <LockedPagesSection
+              lockedPages={lockedPages}
+              onUnlock={handlePaymentClick}
+              price={`$${SHOPIFY_CONFIG.PRODUCT_PRICE_USD}`}
+              isLoading={isPaymentLoading}
+            />
+          )}
+
+          {/* Generating remaining pages - now uses UnlockingOverlay instead */}
+          {/* Old inline message removed - UnlockingOverlay provides the UI */}
+        </div>
+
+        {/* Sticky Action Bar */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] z-50">
+          <div className="max-w-3xl mx-auto px-4 py-4">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              {/* Left - Message & Price */}
+              <div className="text-center sm:text-left">
+                {pollingPayment ? (
+                  <div className="flex items-center space-x-2 text-purple-600">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span className="font-bold">Confirming payment...</span>
+                  </div>
+                ) : book.paymentStatus === 'pending' ? (
+                  <>
+                    <p className="text-gray-600 font-medium">
+                      Love this story? Keep it forever.
+                    </p>
+                    <p className="text-2xl font-heading text-primary">
+                      ${SHOPIFY_CONFIG.PRODUCT_PRICE_USD}
+                    </p>
+                  </>
+                ) : (
+                  <div className="flex items-center space-x-2 text-green-600">
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-bold">Payment Complete!</span>
                   </div>
                 )}
               </div>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-8 animate-in slide-in-from-bottom-8 duration-500 pb-12">
-                {book.pages.map((page, i) => (
-                  <div
-                    key={i}
-                    onClick={() => handlePageJump(i)}
-                    className={`group relative aspect-square rounded-[2.5rem] overflow-hidden shadow-md hover:shadow-2xl transition-all duration-500 cursor-pointer border-8 ${currentPage === i ? 'border-primary ring-8 ring-primary/10 scale-[1.03]' : 'border-white hover:border-primary/50'
-                      }`}
-                  >
-                    <img
-                      src={page.imageUrl}
-                      className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                      alt={`Page ${i + 1}`}
-                    />
-                    <div className="absolute top-5 left-5 z-20">
-                      <span className={`px-4 py-2 rounded-2xl text-xs font-black tracking-widest uppercase shadow-lg ${currentPage === i ? 'bg-primary text-white' : 'bg-black/60 text-white backdrop-blur-sm'
-                        }`}>
-                        Page {i + 1}
-                      </span>
-                    </div>
-                    {book.paymentStatus === 'pending' && (
-                      <div className="absolute inset-0 watermark-overlay opacity-40"></div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
 
-          <div className="lg:w-1/3">
-            <div className="bg-white rounded-[3rem] shadow-xl p-10 sticky top-24 border border-gray-100 animate-in fade-in slide-in-from-right-4 duration-700">
-              <div className="mb-10">
-                <div className="bg-gray-50/80 p-8 rounded-[2.5rem] border border-gray-100 mb-8 group shadow-inner">
-                  <p className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em] mb-4">The Adventure</p>
-                  <div className="flex items-center space-x-5">
-                    <div className="text-5xl group-hover:rotate-12 transition-transform duration-500 drop-shadow-sm">
-                      {THEMES.find(t => t.id === book.theme)?.icon || '📚'}
-                    </div>
-                    <div>
-                      <h4 className="font-heading text-2xl text-slate-800 leading-tight">{book.childName}'s {book.theme}</h4>
-                      <p className="text-primary text-[10px] font-black uppercase mt-2 tracking-[0.15em]">Personalized Edition</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-5 px-4">
-                  <div className="flex items-center space-x-4 text-sm font-bold text-gray-600">
-                    <CheckCircle className="text-green-500 w-5 h-5 flex-shrink-0" />
-                    <span>10 High-Def Illustrations</span>
-                  </div>
-                  <div className="flex items-center space-x-4 text-sm font-bold text-gray-600">
-                    <CheckCircle className="text-green-500 w-5 h-5 flex-shrink-0" />
-                    <span>Unique AI Storyline</span>
-                  </div>
-                  <div className="flex items-center space-x-4 text-sm font-bold text-gray-600">
-                    <CheckCircle className="text-green-500 w-5 h-5 flex-shrink-0" />
-                    <span>Instant Digital Access</span>
-                  </div>
-                </div>
-              </div>
-
-              {book.paymentStatus === 'pending' ? (
-                <div className="space-y-5">
-                  <div className="flex justify-between items-center py-7 border-t border-b border-gray-100 mb-2">
-                    <span className="font-heading text-xl text-gray-400">Total Price</span>
-                    <span className="font-heading text-4xl text-primary">₹{STORYBOOK_PRICE}</span>
-                  </div>
+              {/* Right - Action Buttons */}
+              <div className="flex items-center space-x-3 w-full sm:w-auto">
+                {pollingPayment ? (
+                  /* Polling state - waiting for payment confirmation */
                   <button
-                    onClick={handlePayment}
+                    disabled
+                    className="flex-1 sm:flex-initial bg-gray-200 text-gray-500 px-6 py-3 rounded-xl font-bold flex items-center justify-center space-x-2"
+                  >
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Verifying...</span>
+                  </button>
+                ) : book.paymentStatus === 'pending' ? (
+                  /* Buy Button - Shopify Checkout */
+                  <button
+                    onClick={handlePaymentClick}
                     disabled={isPaymentLoading}
-                    className="w-full bg-primary text-white py-6 rounded-[2rem] font-black text-xl hover:bg-opacity-90 transition-all shadow-xl shadow-primary/20 flex items-center justify-center space-x-3 disabled:opacity-50 active:scale-95"
+                    className="flex-1 sm:flex-initial bg-gradient-to-r from-purple-600 to-pink-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all flex items-center justify-center space-x-2 disabled:opacity-50"
                   >
-                    {isPaymentLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : <CreditCard className="w-6 h-6" />}
-                    <span>Unlock Full Book</span>
+                    {isPaymentLoading ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <ShoppingCart className="w-5 h-5" />
+                    )}
+                    <span>
+                      {isPaymentLoading
+                        ? 'Redirecting...'
+                        : `Buy to Unlock High-Res PDF - $${SHOPIFY_CONFIG.PRODUCT_PRICE_USD}`
+                      }
+                    </span>
                   </button>
+                ) : (
+                  /* Paid - Download Button */
                   <button
-                    onClick={handleDownloadPDF}
-                    disabled={isGeneratingPDF || isPaymentLoading}
-                    className="w-full bg-gray-50 text-gray-400 py-4 rounded-2xl font-bold hover:bg-gray-100 transition-all flex items-center justify-center space-x-2 border-2 border-transparent hover:border-gray-200"
-                  >
-                    {isGeneratingPDF ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileText className="w-5 h-5" />}
-                    <span>Preview PDF</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-5">
-                  <div className="bg-green-50 text-green-700 p-8 rounded-[2.5rem] flex flex-col items-center text-center space-y-3 mb-4 border border-green-100 shadow-inner">
-                    <div className="bg-white p-3 rounded-full shadow-sm">
-                      <CheckCircle className="w-8 h-8" />
-                    </div>
-                    <h4 className="font-heading text-2xl text-green-800">Payment Successful!</h4>
-                    <p className="text-green-600 text-sm">Your high-resolution storybook is ready</p>
-                  </div>
-                  <button
-                    onClick={handleDownloadPDF}
+                    onClick={handleDownloadClick}
                     disabled={isGeneratingPDF}
-                    className="w-full bg-gradient-to-r from-primary to-secondary text-white py-6 rounded-[2rem] font-black text-xl hover:opacity-90 transition-all shadow-xl shadow-primary/20 flex items-center justify-center space-x-3 active:scale-95"
+                    className="flex-1 sm:flex-initial bg-gradient-to-r from-green-500 to-emerald-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all flex items-center justify-center space-x-2"
                   >
-                    {isGeneratingPDF ? <Loader2 className="w-6 h-6 animate-spin" /> : <Download className="w-6 h-6" />}
+                    {isGeneratingPDF ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Download className="w-5 h-5" />
+                    )}
                     <span>Download Your Book</span>
                   </button>
-                  <p className="text-center text-gray-400 text-sm">
-                    High-resolution PDF • No watermarks • Print-ready quality
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Auth Modal */}
+        <AuthModal
+          isOpen={showAuthModal}
+          onClose={() => setShowAuthModal(false)}
+          onGuestContinue={() => {
+            setShowAuthModal(false);
+            if (pendingAction === 'payment') {
+              performPayment();
+            } else if (pendingAction === 'download') {
+              performDownload();
+            }
+            setPendingAction(null);
+          }}
+          title={pendingAction === 'payment' ? "Sign in to track your purchase" : "Sign in to access downloads"}
+          subtitle="Your purchases and downloads will be linked to your account"
+          returnPath={window.location.pathname}
+        />
       </div>
-    </div>
+    </>
   );
 };
 
 export default PreviewStory;
+

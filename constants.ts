@@ -1,80 +1,57 @@
 
-import { ThemeType } from './types';
+import { ThemeType, Theme } from './types';
 
-export const THEMES = [
+export const THEMES: Theme[] = [
   {
-    id: ThemeType.ADVENTURE,
-    title: 'Adventure',
-    description: 'Brave quests through magical forests and mountains.',
-    icon: '🏔️',
+    id: ThemeType.ENCHANTED_FOREST,
+    title: 'Enchanted Forest',
+    description: 'A magical journey through whispering woods and singing streams.',
+    icon: '🌳',
+    ageRange: 'Ages 3-8',
+    tags: ['Magic', 'Nature', 'Adventure'],
     color: 'bg-green-100 border-green-200 text-green-700',
-    coverPrompt: 'A magical winding path leading to a glowing treehouse in a whimsical emerald forest, sparkling fireflies, soft morning light',
-    // High-quality storybook illustration matching the prompt
-    defaultCover: "https://qzuznszfmknjfxeetecy.supabase.co/storage/v1/object/public/app_storage/theme_covers/adventuretheme.png"
+    coverPrompt: 'A magical enchanted forest with sparkling trees, a purple singing stream, and soft pillow mountains in the distance, whimsical children\'s book illustration',
+    defaultCover: "/enchanted_forest_cover.png"
   },
   {
-    id: ThemeType.SPACE,
-    title: 'Space',
-    description: 'Cosmic journeys to distant planets and galaxies.',
-    icon: '🚀',
-    color: 'bg-blue-100 border-blue-200 text-blue-700',
-    coverPrompt: 'A friendly colorful rocket ship soaring past smiling moons and candy-colored nebulas, twinkling stars, vibrant purple and blue galaxy',
-    defaultCover: "https://qzuznszfmknjfxeetecy.supabase.co/storage/v1/object/public/app_storage/theme_covers/spacetheme.png"
-  },
-  {
-    id: ThemeType.UNDERWATER,
-    title: 'Underwater',
-    description: 'Ocean adventures with friendly sea creatures.',
-    icon: '🌊',
-    color: 'bg-cyan-100 border-cyan-200 text-cyan-700',
-    coverPrompt: 'A vibrant coral kingdom under the sea with glowing jellyfish and friendly sea turtles, shimmering turquoise water, sunbeams piercing through the surface',
-    defaultCover: "https://qzuznszfmknjfxeetecy.supabase.co/storage/v1/object/public/app_storage/theme_covers/underwatertheme.png"
-  },
-  {
-    id: ThemeType.FAIRY_TALE,
-    title: 'Fairy Tale',
-    description: 'Enchanted castles, dragons, and magical friends.',
+    id: ThemeType.MAGIC_CASTLE,
+    title: 'Magic Castle',
+    description: 'First day at a magical academy with wizards and dragons.',
     icon: '🏰',
-    color: 'bg-pink-100 border-pink-200 text-pink-700',
-    coverPrompt: 'A magnificent pink and gold castle floating on a soft cloud, surrounded by a rainbow and friendly tiny dragons, magical sparkles everywhere',
+    ageRange: 'Ages 4-10',
+    tags: ['Magic', 'School', 'Fantasy'],
+    color: 'bg-purple-100 border-purple-200 text-purple-700',
+    coverPrompt: 'A grand gothic castle magic school with towers disappearing into mist, a wise owl professor, and a baby dragon, cinematic magical atmosphere',
     defaultCover: "https://qzuznszfmknjfxeetecy.supabase.co/storage/v1/object/public/app_storage/theme_covers/fairytaletheme.png"
   },
   {
-    id: ThemeType.DINOSAUR,
-    title: 'Dinosaur',
-    description: 'Prehistoric world with friendly dinosaur companions.',
-    icon: '🦖',
-    color: 'bg-amber-100 border-amber-200 text-amber-700',
-    coverPrompt: 'A lush prehistoric valley with a friendly long-necked dinosaur eating leaves from a giant flower tree, vibrant tropical jungle, bright sunny day',
-    defaultCover: "https://qzuznszfmknjfxeetecy.supabase.co/storage/v1/object/public/app_storage/theme_covers/dinosaurtheme.png"
+    id: ThemeType.SPY_MISSION,
+    title: 'Spy Mission',
+    description: 'A thrilling secret agent adventure with gadgets and mystery.',
+    icon: '🕵️',
+    ageRange: 'Ages 5-10',
+    tags: ['Adventure', 'Mystery', 'Action'],
+    color: 'bg-slate-100 border-slate-200 text-slate-700',
+    coverPrompt: 'A secret spy headquarters with high-tech gadgets, mysterious shadows, and adventure equipment, exciting action illustration',
+    defaultCover: "https://qzuznszfmknjfxeetecy.supabase.co/storage/v1/object/public/app_storage/theme_covers/spacetheme.png"
   }
 ];
 
 export const THEME_PROMPT_VARIATIONS: Record<ThemeType, string[]> = {
-  [ThemeType.ADVENTURE]: [
-    "{child_name} discovers a hidden map leading to a magical treehouse kingdom",
-    "{child_name} befriends a talking fox on a quest to find the Crystal of Courage",
-    "{child_name} climbs the Whispering Mountains to meet the Cloud Giants"
+  [ThemeType.ENCHANTED_FOREST]: [
+    "{child_name} discovers a secret map to the Enchanted Forest",
+    "{child_name} befriends Pip the squirrel and follows the silver trail",
+    "{child_name} crosses the Singing Stream and climbs the Whispering Mountains"
   ],
-  [ThemeType.SPACE]: [
-    "{child_name} builds a cardboard rocket that accidentally launches to the Moon",
-    "{child_name} finds a friendly alien named Ziggy in the Martian gardens",
-    "{child_name} helps the Star Keeper relight the flickering constellations"
+  [ThemeType.MAGIC_CASTLE]: [
+    "{child_name} arrives at the Grand Academy of Arcane Arts",
+    "{child_name} meets Professor Hoot and learns to tame baby dragon Sparky",
+    "{child_name} masters flying on a broomstick and explores the Ancient Library"
   ],
-  [ThemeType.UNDERWATER]: [
-    "{child_name} finds a shimmering shell that lets them talk to dolphins",
-    "{child_name} visits the Great Coral City to attend the Mermaid's Parade",
-    "{child_name} helps a lost baby turtle find its way home through the Blue Trench"
-  ],
-  [ThemeType.FAIRY_TALE]: [
-    "{child_name} is invited to a tea party by a polite dragon named Barnaby",
-    "{child_name} wakes up in a castle where the furniture loves to sing",
-    "{child_name} helps a clumsy wizard find his lost wand in the Whispering Woods"
-  ],
-  [ThemeType.DINOSAUR]: [
-    "{child_name} travels back in time to play hide-and-seek with a Triceratops",
-    "{child_name} helps a Brachiosaurus find the tastiest leaves on the highest tree",
-    "{child_name} organizes a race between the swiftest raptors in the valley"
+  [ThemeType.SPY_MISSION]: [
+    "{child_name} receives a top-secret mission from headquarters",
+    "{child_name} uses cool spy gadgets to solve the mystery",
+    "{child_name} cracks the code and saves the day like a true secret agent"
   ]
 };
 

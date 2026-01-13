@@ -1,0 +1,81 @@
+/* MagicTales Global Styles */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Scrollbar hide utility */
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Smooth horizontal scroll */
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* Custom Animations for Cover Image */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+@keyframes firefly {
+
+  0%,
+  100% {
+    transform: translateY(0) translateX(0);
+    opacity: 1;
+  }
+
+  25% {
+    transform: translateY(-10px) translateX(5px);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: translateY(-5px) translateX(-5px);
+    opacity: 1;
+  }
+
+  75% {
+    transform: translateY(-15px) translateX(8px);
+    opacity: 0.5;
+  }
+}
+
+.animate-firefly {
+  animation: firefly 4s ease-in-out infinite;
+}
+
+@keyframes pulse-slow {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}

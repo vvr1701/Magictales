@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { User, Storybook } from '../types';
 import { Plus, Book, Trash2, Download, Eye, Clock, Star, Loader2 } from 'lucide-react';
 import * as storage from '../services/storageService';
-import { generateStorybookPDF, downloadBlob } from '../services/pdfService';
+import { api } from '../src/api/client';
 
 interface DashboardProps {
   user: User;
@@ -21,7 +21,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       try {
         const userBooks = await storage.getBooksByUser(user.id);
         setBooks(userBooks);
-        
+
         // Task 1: Redirect to Home if no books exist
         if (!loading && userBooks.length === 0) {
           navigate('/');
@@ -61,10 +61,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     if (book.paymentStatus !== 'paid') return;
     setDownloadingId(book.id);
     try {
-      const pdfBlob = await generateStorybookPDF(book, false);
-      downloadBlob(pdfBlob, `${book.childName}_${book.theme}_Adventure.pdf`);
+      const downloadData = await api.getDownload(book.id);
+      if (downloadData.status === 'ready' && downloadData.downloads?.pdf) {
+        window.open(downloadData.downloads.pdf.url, '_blank');
+      } else if (downloadData.status === 'generating') {
+        alert('Your PDF is still being generated. Please try again in a few minutes.');
+      } else {
+        throw new Error('PDF download not available');
+      }
     } catch (e) {
-      alert("Failed to generate PDF. Please try again.");
+      alert("Failed to download PDF. Please try again.");
     } finally {
       setDownloadingId(null);
     }
@@ -98,9 +104,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             <div className="aspect-[4/3] bg-gray-100 relative">
               <img src={book.pages[0]?.imageUrl || 'https://picsum.photos/seed/placeholder/400/300'} alt={book.childName} className="w-full h-full object-cover" />
               <div className="absolute top-4 right-4">
-                <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm ${
-                  book.paymentStatus === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                }`}>
+                <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm ${book.paymentStatus === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                  }`}>
                   {book.paymentStatus}
                 </span>
               </div>
@@ -115,9 +120,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   </div>
                 </div>
               </div>
-              
+
               <div className="grid grid-cols-2 gap-3 mt-6">
-                <Link 
+                <Link
                   to={`/preview/${book.id}`}
                   className="flex items-center justify-center space-x-2 bg-gray-50 text-gray-700 px-4 py-3 rounded-xl hover:bg-gray-100 transition font-bold"
                 >
@@ -125,7 +130,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   <span>Preview</span>
                 </Link>
                 {book.paymentStatus === 'paid' ? (
-                  <button 
+                  <button
                     onClick={() => handleDownload(book)}
                     disabled={downloadingId === book.id}
                     className="flex items-center justify-center space-x-2 bg-secondary text-white px-4 py-3 rounded-xl hover:bg-opacity-90 transition font-bold disabled:opacity-50"
@@ -140,8 +145,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   </Link>
                 )}
               </div>
-              
-              <button 
+
+              <button
                 onClick={() => handleDeleteBook(book.id)}
                 className="mt-4 w-full flex items-center justify-center space-x-2 text-gray-400 hover:text-red-500 transition text-sm font-medium"
               >

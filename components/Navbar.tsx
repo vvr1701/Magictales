@@ -29,11 +29,8 @@ const Navbar: React.FC<NavbarProps> = ({ user, onLogout }) => {
                   <LayoutDashboard className="w-4 h-4" />
                   <span>Dashboard</span>
                 </Link>
-                {/* Redirecting "Create Book" to Home (Theme Selection) */}
-                <Link to="/" className="bg-primary text-white px-5 py-2 rounded-full font-bold hover:bg-opacity-90 transition shadow-sm">
-                  Create Book
-                </Link>
-                <button 
+
+                <button
                   onClick={() => { onLogout(); navigate('/'); }}
                   className="text-gray-500 hover:text-red-500 transition"
                 >

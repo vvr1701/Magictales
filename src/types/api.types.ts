@@ -1,0 +1,151 @@
+/**
+ * API Type Definitions
+ * 
+ * These interfaces mirror the backend Pydantic schemas for type safety
+ * across the frontend-backend boundary.
+ */
+
+// ==================
+// Enums
+// ==================
+
+// Backend themes - these are the actual values accepted by the API
+export enum Theme {
+    // Primary StoryGift themes
+    STORYGIFT_MAGIC_CASTLE = 'storygift_magic_castle',
+    STORYGIFT_ENCHANTED_FOREST = 'storygift_enchanted_forest',
+    STORYGIFT_SPY_MISSION = 'storygift_spy_mission',
+    // Legacy themes
+    MAGIC_CASTLE = 'magic_castle',
+    SPACE_ADVENTURE = 'space_adventure',
+    UNDERWATER = 'underwater',
+    FOREST_FRIENDS = 'forest_friends',
+}
+
+export enum BookStyle {
+    PHOTOREALISTIC = 'photorealistic',
+    CARTOON_3D = 'cartoon_3d',
+}
+
+export enum JobStatus {
+    QUEUED = 'queued',
+    PROCESSING = 'processing',
+    COMPLETED = 'completed',
+    FAILED = 'failed',
+}
+
+export enum PreviewStatus {
+    PENDING = 'pending',
+    VALIDATING = 'validating',
+    GENERATING = 'generating',
+    ACTIVE = 'active',
+    COMPLETED = 'completed',
+    FAILED = 'failed',
+    EXPIRED = 'expired',
+    PURCHASED = 'purchased',
+}
+
+
+// ==================
+// Request Types
+// ==================
+
+export interface PreviewCreateRequest {
+    photo_url: string;
+    child_name: string;
+    child_age: number;
+    child_gender: 'male' | 'female';
+    theme: Theme;
+    style?: BookStyle;
+    session_id?: string;
+    customer_email?: string;
+}
+
+// ==================
+// Response Types
+// ==================
+
+export interface PhotoUploadResponse {
+    photo_id: string;
+    photo_url: string;
+    face_valid: boolean;
+    face_count: number;
+}
+
+export interface JobStartResponse {
+    job_id: string;
+    preview_id: string;
+    status: JobStatus;
+    estimated_time_seconds: number;
+    message: string;
+}
+
+export interface JobStatusResponse {
+    job_id: string;
+    status: JobStatus;
+    progress: number;
+    current_step?: string;
+    preview_id?: string;
+    redirect_url?: string;
+    error?: string;
+    can_retry: boolean;
+}
+
+export interface PageData {
+    page_number: number;
+    image_url: string;
+    story_text: string;
+    is_watermarked: boolean;
+    is_locked: boolean;
+}
+
+export interface PreviewResponse {
+    preview_id: string;
+    status: PreviewStatus;
+    story_title: string;
+    child_name: string;
+    theme: Theme;
+    style: BookStyle;
+    preview_pages: PageData[];
+    locked_pages?: PageData[];
+    total_pages: number;
+    preview_pages_count: number;
+    locked_pages_count: number;
+    expires_at: string;
+    days_remaining: number;
+    purchase: {
+        price: number;
+        currency: string;
+        discount?: number;
+    };
+}
+
+export interface DownloadResponse {
+    status: 'generating' | 'ready' | 'failed';
+    downloads?: {
+        pdf: {
+            url: string;
+            filename: string;
+            size_mb?: number;
+            expires_in_seconds: number;
+        };
+        images?: Array<{
+            page: number;
+            url: string;
+            filename: string;
+        }>;
+    };
+    progress?: number;
+    message?: string;
+    expires_at?: string;
+    days_remaining?: number;
+}
+
+export interface ErrorResponse {
+    success: false;
+    error: {
+        code: string;
+        message: string;
+        details?: Record<string, unknown>;
+    };
+}
